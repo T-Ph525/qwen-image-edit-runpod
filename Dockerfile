@@ -10,17 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-RUN pip install --no-cache-dir \
-    diffusers \
-    transformers \
-    accelerate \
-    safetensors \
-    pillow \
-    runpod \
-    hf_transfer \
-    bitsandbytes \
-    torch \
-    torchvision
+RUN pip install -r requirements.txt
 
 # Install latest diffusers from GitHub for cutting-edge features
 RUN pip install --no-cache-dir git+https://github.com/huggingface/diffusers.git
@@ -30,7 +20,7 @@ COPY handler.py .
 
 # (Optional) Pre-download the model to reduce cold start latency
 # Uncomment the following lines to include the model in the image
-# RUN python -c "from diffusers import DiffusionPipeline; DiffusionPipeline.from_pretrained('Qwen/Qwen-Image-Edit-2509', torch_dtype=torch.float16)"
+RUN python -c "from diffusers import DiffusionPipeline; DiffusionPipeline.from_pretrained('Qwen/Qwen-Image-Edit-2509', torch_dtype=torch.float16)"
 
 # Set environment variables for optimization
 ENV HF_HUB_ENABLE_HF_TRANSFER=1

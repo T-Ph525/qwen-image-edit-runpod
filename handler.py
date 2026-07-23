@@ -16,21 +16,11 @@ def load_pipeline():
     """
     Load and optimize the Qwen Image Edit pipeline with Lightning LoRA and attention optimizations.
     """
-    # Create scheduler for optimization
-    from diffusers import EulerDiscreteScheduler
-    scheduler = EulerDiscreteScheduler.from_config({
-        "num_train_timesteps": 1000,
-        "beta_start": 0.0001,
-        "beta_end": 0.02,
-        "beta_schedule": "linear"
-    })
-    
     # Initialize pipeline with safetensors model
     pipe = QwenImageEditPlusPipeline.from_single_file(
         "path/to/Qwen-Rapid-AIO-NSFW-v21.safetensors",
         original_config="Qwen/Qwen-Image-Edit-2511",
-        scheduler=scheduler,
-        torch_dtype=torch.bfloat16
+        torch_dtype=torch.float16
     ).to("cuda")
     
     # Load and fuse Lightning LoRA
@@ -46,15 +36,10 @@ def load_pipeline():
     pipe.transformer.__class__ = QwenImageTransformer2DModel
     pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
     
-    # Ahead-of-time compilation optimization
-    print("Compiling pipeline...")
-    from diffusers.pipelines.qwen_edit import optimize_pipeline_
-    optimize_pipeline_(
-        pipe, 
-        image=[Image.new("RGB", (1024, 1024)), Image.new("RGB", (1024, 1024))], 
-        prompt="optimization"
-    )
-    print("Pipeline compilation complete.")
+    # Enable memory efficient attention
+    pipe.enable_attention_slicing()
+    
+    print("Pipeline loaded and optimized.")
     
     return pipe
 
@@ -63,21 +48,28 @@ pipe = load_pipeline()
 
 def handler(event):
     """
-    Runpod handler function. Receives job input and returns output.
+    Runpod serverless handler function. Receives job input and returns output.
     """
     try:
         input_data = event["input"]
         prompt = input_data.get("prompt", "Enhance the image")
         image_url = input_data.get("image_url")
+        num_inference_steps = input_data.get("num_inference_steps", 4)
+        guidance_scale = input_data.get("guidance_scale", 7.5)
 
         if not image_url:
             return {"error": "Missing 'image_url' parameter."}
 
         input_image = load_image(image_url)
         
-        # Use optimized pipeline with bfloat16
-        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
-            output_image = pipe(image=input_image, prompt=prompt).images[0]
+        # Run inference with float16
+        with torch.no_grad():
+            output_image = pipe(
+                image=input_image, 
+                prompt=prompt,
+                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale
+            ).images[0]
 
         buffered = BytesIO()
         output_image.save(buffered, format="PNG")

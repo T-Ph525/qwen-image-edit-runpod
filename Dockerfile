@@ -21,7 +21,7 @@ COPY handler.py .
 
 # (Optional) Pre-download the model to reduce cold start latency
 # Uncomment the following lines to include the model in the image
-RUN python -c "import torch; from diffusers import DiffusionPipeline; DiffusionPipeline.from_pretrained('Qwen/Qwen-Image-Edit-2509', torch_dtype=torch.float16)"
+#RUN python -c "import torch; from diffusers import DiffusionPipeline; DiffusionPipeline.from_pretrained('Qwen/Qwen-Image-Edit-2509', torch_dtype=torch.float16)"
 
 # Set environment variables for optimization
 ENV HF_HUB_ENABLE_HF_TRANSFER=1

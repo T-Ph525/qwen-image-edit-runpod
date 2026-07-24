@@ -1,46 +1,50 @@
 import runpod
-from diffusers import DiffusionPipeline
+from diffusers import DiffusionPipeline, QwenImageEditPlusPipeline
+from diffusers.models import QwenImageTransformer2DModel, GGUFQuantizationConfig
+from diffusers.models.attention_processor import QwenDoubleStreamAttnProcessorFA3
 from diffusers.utils import load_image
 import torch
 from io import BytesIO
 import base64
-from PIL import Image
+from huggingface_hub import hf_hub_download
 
-# Import additional components for optimization
-from diffusers.models import QwenImageTransformer2DModel
-from diffusers.models.attention_processor import QwenDoubleStreamAttnProcessorFA3
-from diffusers.pipelines import QwenImageEditPlusPipeline
+# Hugging Face Repository Information
+REPO_ID = "Novice25/Qwen-Image-Edit-Rapid-AIO-GGUF"
+FILENAME = "v23/v23/Qwen-Rapid-NSFW-v23_Q5_K.gguf"
 
-# Load model on startup with optimizations
 def load_pipeline():
     """
-    Load and optimize the Qwen Image Edit pipeline with Lightning LoRA and attention optimizations.
+    Load and optimize the Qwen Image Edit pipeline using GGUF transformer weights.
     """
-    # Initialize pipeline with safetensors model
-    pipe = QwenImageEditPlusPipeline.from_single_file(
-        "path/to/Qwen-Rapid-AIO-NSFW-v21.safetensors",
-        original_config="Qwen/Qwen-Image-Edit-2511",
-        torch_dtype=torch.float16
-    ).to("cuda")
-    
-    # Load and fuse Lightning LoRA
-    print("Loading lightning lora...")
-    pipe.load_lora_weights(
-        "lightx2v/Qwen-Image-Edit-2511-Lightning", 
-        weight_name="Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"
+    print("Downloading GGUF weights...")
+    gguf_path = hf_hub_download(repo_id=REPO_ID, filename=FILENAME)
+
+    print("Loading GGUF quantized transformer...")
+    # Load the quantized GGUF model into the transformer component
+    transformer = QwenImageTransformer2DModel.from_single_file(
+        gguf_path,
+        quantization_config=GGUFQuantizationConfig(compute_dtype=torch.bfloat16),
+        torch_dtype=torch.bfloat16
     )
-    pipe.fuse_lora()
-    print("Lightning lora fused.")
-    
-    # Apply transformer optimizations
-    pipe.transformer.__class__ = QwenImageTransformer2DModel
-    pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
-    
-    # Enable memory efficient attention
+
+    print("Initializing Qwen Image Edit Pipeline...")
+    # Load base pipeline and replace its transformer with the GGUF model
+    pipe = QwenImageEditPlusPipeline.from_pretrained(
+        "Qwen/Qwen-Image-Edit-2511",
+        transformer=transformer,
+        torch_dtype=torch.bfloat16
+    ).to("cuda")
+
+    # Apply FlashAttention-3 processor if supported
+    try:
+        pipe.transformer.set_attn_processor(QwenDoubleStreamAttnProcessorFA3())
+    except Exception as e:
+        print(f"FA3 Processor warning: {e}. Falling back to default attention.")
+
+    # Enable memory efficiency
     pipe.enable_attention_slicing()
-    
-    print("Pipeline loaded and optimized.")
-    
+
+    print("Pipeline loaded and optimized successfully.")
     return pipe
 
 # Load model on startup
@@ -54,15 +58,15 @@ def handler(event):
         input_data = event["input"]
         prompt = input_data.get("prompt", "Enhance the image")
         image_url = input_data.get("image_url")
-        num_inference_steps = input_data.get("num_inference_steps", 4)
-        guidance_scale = input_data.get("guidance_scale", 7.5)
+        # Default steps for Rapid/Lightning merged models is usually 4-8
+        num_inference_steps = input_data.get("num_inference_steps", 4) 
+        guidance_scale = input_data.get("guidance_scale", 3.5)
 
         if not image_url:
             return {"error": "Missing 'image_url' parameter."}
 
         input_image = load_image(image_url)
-        
-        # Run inference with float16
+
         with torch.no_grad():
             output_image = pipe(
                 image=input_image, 
